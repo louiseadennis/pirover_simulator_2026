@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='utf-8'?>
+<world background_index="0" width="800" height="600" sonar_resolution="10">
+    <robot position_x="180" position_y="180" rotation="0" />
+    <static_object index="2" position_x="374" position_y="314" />
+</world>

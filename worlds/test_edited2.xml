@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<world background_index="2" width="800" height="600" sonar_resolution="10">
+    <robot position_x="371" position_y="354" rotation="-15" />
+    <line_map index="8" position_x="707" position_y="121" />
+    <light_source position_x="387" position_y="208" />
+    <static_object index="5" position_x="431" position_y="349" />
+    <static_object index="7" position_x="495" position_y="276" />
+    <static_object index="6" position_x="492" position_y="336" />
+</world>
