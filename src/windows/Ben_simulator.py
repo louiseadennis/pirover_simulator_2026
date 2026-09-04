@@ -1,140 +1,3 @@
-# main Robot-Workshop simulator
-#
-# overall flow:
-#   pysim.py
-#       -> opens the tkinter start window
-#       -> user selects world + robot
-#       -> creates Simulator from this file
-#
-#   Simulator
-#       -> loads the selected XML world and resources
-#       -> creates the main pyglet simulation window
-#       -> controls robot movement and collisions
-#       -> calculates sensors when requested
-#       -> communicates with simclient using UDP
-#       -> opens new_objectwindow.py when EDIT is selected
-#       -> saves edited worlds as new XML files
-#
-#   simclient.py / simrobot.py
-#       -> student code uses the original simrobot API
-#       -> movement commands are sent to this simulator by UDP
-#       -> sensor requests are sent separately and calculated on demand
-#
-#
-# important design notes:
-#
-# - sensors are NOT continuously calculated in update()
-#   they are only calculated when requested through simrobot/simclient
-#
-# - normal state packets are still published for backwards compatibility
-#
-# - world edits are held in memory until SAVE is pressed
-#   SAVE uses Save As so the original XML world is not overwritten
-#
-# - closing the simulator returns to the original tkinter world selector
-#
-# - the editor is a separate pyglet window
-#   switch_to() is important when creating/deleting sprites because each
-#   pyglet window has its own OpenGL context
-#
-# - shadow_window is disabled because pyglet 2 context sharing caused
-#   problems with the original simulator
-#
-# - most world/sensor distances are currently simulation pixels rather
-#   than calibrated real-world centimetres
-#
-#
-# sensor simulation:
-#
-#   sonar
-#       -> several rays approximate the sonar beam
-#       -> nearest obstacle gives the distance
-#       -> optional Gaussian distance noise
-#
-#   IR
-#       -> left, middle and right sensors
-#       -> three rays approximate each sensor beam
-#       -> returns True/False depending on detection range
-#       -> optional noise and false positive/negative errors
-#
-#   line sensors
-#       -> sample the line map beneath the virtual sensor positions
-#       -> custom maps use pixel brightness
-#
-#   light sensors
-#       -> four sensors around the robot
-#       -> directional sensitivity
-#       -> inverse-square distance fall-off
-#       -> obstacles/robot can block the light
-#       -> output kept between 0 and 1023
-#
-#
-# sensor options:
-#
-#   NOISE
-#       adds Gaussian measurement noise
-#
-#   FALSE +/-
-#       enables false positives and false negatives
-#       percentages can be changed by the user
-#
-#   LATENCY
-#       delays sensor responses
-#       each sensor type has its own latency value
-#
-#
-# main constants below:
-#
-#   ROBOT_WIDTH
-#       displayed robot width in pixels
-#
-#   FORWARD_SPEED / TURNING_SPEED
-#       speeds used by the manual WASD controls
-#
-#   LINE_SENSOR_FORWARD / LINE_SENSOR_SIDE
-#       virtual line sensor positions relative to robot centre
-#
-#   LINE_DARKNESS_THRESHOLD
-#       maximum RGB brightness treated as a dark line
-#
-#   *_NOISE
-#       standard deviation used for Gaussian sensor noise
-#
-#   DEFAULT_FALSE_POSITIVE_PERCENT
-#   DEFAULT_FALSE_NEGATIVE_PERCENT
-#       default sensor error chances, currently 2%
-#
-#   SONAR_MIN_RANGE / SONAR_MAX_RANGE
-#   IR_MIN_RANGE / IR_MAX_RANGE
-#       sensor detection ranges in simulation pixels
-#
-#   *_BEAM_ANGLE
-#       total sensor field of view in radians
-#
-#   *_RAYS
-#       number of rays used to approximate the sensor beam
-#
-#   *_LATENCY
-#       simulated sensor response delay in seconds
-#
-#   LIGHT_MAX_VALUE / LIGHT_MIN_VALUE
-#       light sensor output limits
-#
-#   LIGHT_FULL_DISTANCE
-#       distance where light is treated as full strength
-#
-#   LIGHT_STDDEV
-#       controls how directional the light sensors are
-#
-#   UDP_DATA_PORT
-#       simulator -> simclient data/sensor responses
-#
-#   UDP_COMMAND_PORT
-#       simclient -> simulator movement/sensor requests
-#
-#   SOCKET_INTERVAL
-#       time between normal state packets
-
 from pathlib import Path
 
 import math
@@ -208,11 +71,29 @@ IR_RAYS = 3
 # standard deviation used around IR detection distance
 IR_DISTANCE_NOISE = 2.0
 
+
+# robot LED display
+LED_RADIUS = 2.8
+LED_OUTLINE_RADIUS = 3.8
+LED_OFF_COLOR = (35, 35, 35)
+
+
+# Pi2Go2 encoder setup
+PI2GO2_WHEEL_DIAMETER_MM = 65.0
+PI2GO2_ENCODER_PULSES_PER_REV = 20
+PI2GO2_ROBOT_WIDTH_MM = 118.0
+
+# use robot width as wheel spacing until the actual spacing is measured
+PI2GO2_WHEEL_TRACK_MM = 118.0
+PI2GO2_MM_PER_PIXEL = PI2GO2_ROBOT_WIDTH_MM / ROBOT_WIDTH
+
+
 # delay added to each sensor type when latency is enabled (seconds)
 SONAR_LATENCY = 0.08
 IR_LATENCY = 0.02
 LINE_LATENCY = 0.01
 LIGHT_LATENCY = 0.03
+ENCODER_LATENCY = 0.005
 
 
 # maximum/minimum light sensor output
@@ -251,7 +132,6 @@ def centre_image(image):
 #   simulate sensors when queried
 #   UDP communication with simclient
 #   save edited worlds
-
 class Simulator(pyglet.window.Window):
 
     def __init__(
@@ -392,7 +272,7 @@ class Simulator(pyglet.window.Window):
         self.socket_running = True
 
 
-        # initio sonar can rotate using its servo
+        # Initio sonar can rotate using its servo
         self.sonar_angle = 0
 
 
@@ -408,6 +288,20 @@ class Simulator(pyglet.window.Window):
 
         # optional delay before a requested sensor value is returned
         self.sensor_latency_enabled = False
+
+
+        # LED colours sent by simclient
+        self.robot_led_values = []
+        self.robot_leds = []
+        self.robot_led_outlines = []
+        self.robot_led_offsets = []
+
+
+        # Pi2Go2 encoder counts
+        self.left_encoder_count = 0
+        self.right_encoder_count = 0
+        self.left_encoder_fraction = 0.0
+        self.right_encoder_fraction = 0.0
 
 
         # latest sensor readings
@@ -434,6 +328,7 @@ class Simulator(pyglet.window.Window):
         self.load_objects()
         self.load_lights()
         self.load_robot()
+        self.load_robot_leds()
         self.load_menu_buttons()
 
 
@@ -464,8 +359,9 @@ class Simulator(pyglet.window.Window):
         self.update_caption()
 
 
+     
     # world loading
-
+     
 
     def load_background(self):
 
@@ -830,6 +726,9 @@ class Simulator(pyglet.window.Window):
         if self.selected_robot == "Initio":
             filename = "rover.png"
 
+        elif self.selected_robot == "Pi2Go2":
+            filename = "pi2go2.png"
+
         else:
             filename = "pi2go.png"
 
@@ -861,6 +760,148 @@ class Simulator(pyglet.window.Window):
         # pyglet rotation runs opposite to simulation heading
         self.heading = -self.robot_rotation
         self.robot.rotation = self.robot_rotation
+
+
+     
+    # robot LEDs
+     
+
+    def load_robot_leds(self):
+
+        # Initio does not use the Pi2Go LED display
+        if self.selected_robot == "Initio":
+            return
+
+        half_width = self.robot.width / 2
+        half_height = self.robot.height / 2
+
+        if self.selected_robot == "Pi2Go2":
+
+            # first 8 LEDs run across the front
+            front_x = half_width - 5
+            top_y = half_height - 6
+            bottom_y = -half_height + 6
+
+            front_leds = []
+            for i in range(8):
+                y = top_y + (bottom_y - top_y) * i / 7
+                front_leds.append((front_x - 10, y))
+
+            # final 2 LEDs sit at the rear corners
+            back_x = -half_width + 6
+            self.robot_led_offsets = front_leds + [
+                (back_x, half_height - 7),
+                (back_x, -half_height + 7)
+            ]
+
+        else:
+
+            # Pi2Go packet order is front, right, back, left
+            front_x = half_width - 5
+            back_x = -half_width + 6
+            side_y = half_height - 4
+
+            # about 2/3 of the way from the rear to the front
+            side_x = -half_width + self.robot.width * 2 / 3
+
+            self.robot_led_offsets = [
+                # front pair
+                (front_x - 11, half_height - 16),
+                (front_x - 11, -half_height + 16),
+
+                # right pair
+                (side_x - 5, -side_y + 12),
+                (side_x - 14, -side_y + 12),
+
+                # back pair
+                (back_x + 2, half_height - 17),
+                (back_x + 2, -half_height + 17),
+
+                # left pair
+                (side_x - 5, side_y - 12),
+                (side_x - 14 , side_y - 12)
+            ]
+
+        self.robot_led_values = [
+            [0, 0, 0]
+            for _ in self.robot_led_offsets
+        ]
+
+        # each LED is a dark outline with the coloured LED on top
+        for _ in self.robot_led_offsets:
+            outline = pyglet.shapes.Circle(
+                self.robot.x,
+                self.robot.y,
+                LED_OUTLINE_RADIUS,
+                color=(15, 15, 15)
+            )
+
+            led = pyglet.shapes.Circle(
+                self.robot.x,
+                self.robot.y,
+                LED_RADIUS,
+                color=LED_OFF_COLOR
+            )
+
+            self.robot_led_outlines.append(outline)
+            self.robot_leds.append(led)
+
+
+    def set_robot_led_values(self, values, led_count):
+
+        # RGB values start after vx and vth
+        for i in range(led_count):
+            start = 2 + i * 3
+
+            try:
+                red = int(float(values[start]))
+                green = int(float(values[start + 1]))
+                blue = int(float(values[start + 2]))
+            except (ValueError, IndexError):
+                continue
+
+            self.robot_led_values[i] = [
+                max(0, min(255, red)),
+                max(0, min(255, green)),
+                max(0, min(255, blue))
+            ]
+
+
+    def update_robot_led_display(self):
+
+        if not self.robot_leds:
+            return
+
+        angle = math.radians(self.heading)
+        cos_angle = math.cos(angle)
+        sin_angle = math.sin(angle)
+
+        for i, (offset_x, offset_y) in enumerate(self.robot_led_offsets):
+
+            # rotate LED position with the robot
+            x = self.robot.x + offset_x * cos_angle - offset_y * sin_angle
+            y = self.robot.y + offset_x * sin_angle + offset_y * cos_angle
+
+            self.robot_led_outlines[i].x = x
+            self.robot_led_outlines[i].y = y
+            self.robot_leds[i].x = x
+            self.robot_leds[i].y = y
+
+            red, green, blue = self.robot_led_values[i]
+
+            if red == 0 and green == 0 and blue == 0:
+                self.robot_leds[i].color = LED_OFF_COLOR
+            else:
+                self.robot_leds[i].color = (red, green, blue)
+
+
+    def draw_robot_leds(self):
+
+        self.update_robot_led_display()
+
+        for outline, led in zip(self.robot_led_outlines, self.robot_leds):
+            outline.draw()
+            led.draw()
 
 
     def load_menu_buttons(self):
@@ -1027,9 +1068,9 @@ class Simulator(pyglet.window.Window):
         )
 
 
-    #  
+     
     # sensor noise
-    #  
+     
 
     def toggle_sensor_noise(self):
 
@@ -1049,9 +1090,9 @@ class Simulator(pyglet.window.Window):
         )
 
 
-    #  
+     
     # false positive/negative readings
-         
+     
 
     def toggle_false_positives(self):
 
@@ -1112,9 +1153,9 @@ class Simulator(pyglet.window.Window):
         )
 
 
-         
+     
     # sensor latency
-         
+     
 
     def toggle_sensor_latency(self):
 
@@ -1148,6 +1189,9 @@ class Simulator(pyglet.window.Window):
 
         if sensor.startswith("LIGHT_"):
             return LIGHT_LATENCY
+
+        if sensor.startswith("ENCODER_"):
+            return ENCODER_LATENCY
 
         return 0
 
@@ -1526,6 +1570,7 @@ class Simulator(pyglet.window.Window):
 
      
     # line sensors
+     
 
     def get_line_sensor_positions(self):
 
@@ -1776,9 +1821,9 @@ class Simulator(pyglet.window.Window):
         return False
 
 
-         
+     
     # sonar / IR
-         
+     
 
     # converts a position relative to robot into world coordinates
     def get_sensor_position(
@@ -2297,9 +2342,9 @@ class Simulator(pyglet.window.Window):
         return triggered
 
 
-         
+     
     # light sensors
-         
+     
 
     def get_light_source(self):
 
@@ -2651,9 +2696,9 @@ class Simulator(pyglet.window.Window):
         return value
 
 
-         
+     
     # collision
-         
+     
 
     def mouse_over(
         self,
@@ -2772,9 +2817,9 @@ class Simulator(pyglet.window.Window):
         )
 
 
-         
+     
     # mouse / keyboard
-         
+     
 
     def on_mouse_press(
         self,
@@ -2945,9 +2990,9 @@ class Simulator(pyglet.window.Window):
             self.close_world()
 
 
-         
+     
     # saving
-         
+     
 
     def build_world_xml(self):
 
@@ -3244,9 +3289,45 @@ class Simulator(pyglet.window.Window):
             return
 
 
-         
+     
+    # Pi2Go2 wheel encoders
+     
+
+    def update_encoders(self, linear_speed, angular_speed, dt):
+
+        if self.selected_robot != "Pi2Go2" or dt <= 0:
+            return
+
+        # simulator speed is in pixels/sec, encoders use the real wheel size
+        linear_speed_mm = linear_speed * PI2GO2_MM_PER_PIXEL
+        angular_speed_rad = math.radians(angular_speed)
+
+        # work out how fast each wheel is moving
+        left_speed_mm = linear_speed_mm - angular_speed_rad * PI2GO2_WHEEL_TRACK_MM / 2
+        right_speed_mm = linear_speed_mm + angular_speed_rad * PI2GO2_WHEEL_TRACK_MM / 2
+
+        wheel_circumference = math.pi * PI2GO2_WHEEL_DIAMETER_MM
+
+        # distance travelled -> wheel turns -> encoder pulses
+        left_pulses = left_speed_mm * dt / wheel_circumference * PI2GO2_ENCODER_PULSES_PER_REV
+        right_pulses = right_speed_mm * dt / wheel_circumference * PI2GO2_ENCODER_PULSES_PER_REV
+
+        # keep part pulses until they make a full encoder pulse
+        self.left_encoder_fraction += left_pulses
+        self.right_encoder_fraction += right_pulses
+
+        left_whole = math.trunc(self.left_encoder_fraction)
+        right_whole = math.trunc(self.right_encoder_fraction)
+
+        self.left_encoder_count += left_whole
+        self.right_encoder_count += right_whole
+        self.left_encoder_fraction -= left_whole
+        self.right_encoder_fraction -= right_whole
+
+
+     
     # sensor requests
-         
+     
 
     def handle_sensor_request(
         self,
@@ -3300,11 +3381,11 @@ class Simulator(pyglet.window.Window):
 
         elif sensor == "IR_MIDDLE":
 
-            value = int(
-                self.calculate_ir(
-                    "middle"
-                )
-            )
+            # no middle obstacle sensor on Pi2Go2
+            if self.selected_robot == "Pi2Go2":
+                value = 0
+            else:
+                value = int(self.calculate_ir("middle"))
 
 
         elif sensor == "IR_RIGHT":
@@ -3352,6 +3433,25 @@ class Simulator(pyglet.window.Window):
             )
 
 
+        elif sensor == "ENCODER_LEFT":
+            value = self.left_encoder_count if self.selected_robot == "Pi2Go2" else 0
+
+
+        elif sensor == "ENCODER_RIGHT":
+            value = self.right_encoder_count if self.selected_robot == "Pi2Go2" else 0
+
+
+        elif sensor == "ENCODER_RESET":
+
+            if self.selected_robot == "Pi2Go2":
+                self.left_encoder_count = 0
+                self.right_encoder_count = 0
+                self.left_encoder_fraction = 0.0
+                self.right_encoder_fraction = 0.0
+
+            value = 1
+
+
         else:
             return
 
@@ -3397,9 +3497,9 @@ class Simulator(pyglet.window.Window):
             send_response()
 
 
-         
+     
     # UDP communication
-         
+     
 
     def receive_commands(self):
 
@@ -3485,8 +3585,16 @@ class Simulator(pyglet.window.Window):
                     continue
 
 
+                # Pi2Go2 command packet
+                if len(values) == 32:
+
+                    self.socket_vx = float(values[0])
+                    self.socket_vth = float(values[1])
+                    self.set_robot_led_values(values, 10)
+
+
                 # Pi2Go command packet
-                if len(values) == 26:
+                elif len(values) == 26:
 
                     self.socket_vx = float(
                         values[0]
@@ -3495,6 +3603,8 @@ class Simulator(pyglet.window.Window):
                     self.socket_vth = float(
                         values[1]
                     )
+
+                    self.set_robot_led_values(values, 8)
 
 
                 # Initio command packet
@@ -3562,12 +3672,19 @@ class Simulator(pyglet.window.Window):
                 if self.selected_robot == "Initio":
                     robot_name = "INITIO"
 
+                elif self.selected_robot == "Pi2Go2":
+                    robot_name = "PI2GO2"
+
                 else:
                     robot_name = "PI2GO"
 
 
                 # these are cached sensor values
                 # no sensor calculation happens here
+                ir_middle = self.ir_middle_triggered
+                if self.selected_robot == "Pi2Go2":
+                    ir_middle = False
+
                 values = [
 
                     robot_name,
@@ -3596,7 +3713,7 @@ class Simulator(pyglet.window.Window):
 
                     str(
                         int(
-                            self.ir_middle_triggered
+                            ir_middle
                         )
                     ),
 
@@ -3624,8 +3741,18 @@ class Simulator(pyglet.window.Window):
                 ]
 
 
-                # Pi2Go LED states
-                values += ["0"] * 24
+                # keep the same packet layout and send the LED colours too
+                if self.selected_robot == "Pi2Go2":
+                    for led in self.robot_led_values:
+                        values += [str(led[0]), str(led[1]), str(led[2])]
+
+                else:
+                    for led in self.robot_led_values:
+                        values += [str(led[0]), str(led[1]), str(led[2])]
+
+                    # Initio has no robot LEDs but keeps the old packet length
+                    if self.selected_robot == "Initio":
+                        values += ["0"] * 24
 
                 # control switch
                 values.append("1")
@@ -3702,9 +3829,9 @@ class Simulator(pyglet.window.Window):
         self.state_socket = None
 
 
-         
+     
     # main simulation
-         
+     
 
     def update(self, dt):
 
@@ -3753,6 +3880,10 @@ class Simulator(pyglet.window.Window):
             angular_speed = (
                 -TURNING_SPEED
             )
+
+
+        # Pi2Go2 encoders count while the robot is moving
+        self.update_encoders(linear_speed, angular_speed, dt)
 
 
         # update robot orientation
@@ -3823,6 +3954,7 @@ class Simulator(pyglet.window.Window):
 
 
         self.robot.draw()
+        self.draw_robot_leds()
 
 
         # toolbar drag preview
@@ -3844,9 +3976,9 @@ class Simulator(pyglet.window.Window):
         self.latency_button_label.draw()
 
 
-         
+     
     # closing
-         
+     
 
     def cleanup(self):
 

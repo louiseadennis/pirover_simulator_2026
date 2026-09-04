@@ -1,57 +1,3 @@
-# changes to original simclient
-#
-# sensor calculations are now done on demand rather than continuously
-#
-# when a sensor function is called:
-#
-#   getDistance() / irLeft() / getLightFL() etc
-#       -> query_sensor() sends a request to Ben_simulator.py
-#       -> simulator calculates the sensor reading
-#       -> calculated value is sent back
-#       -> simclient converts/stores the result
-#
-# simclient does not calculate the sensor physics itself
-# distance, beam angles, noise, false readings, light fall-off etc are
-# all calculated in Ben_simulator.py
-#
-#
-# sensor request format:
-#
-#   <<SENSOR;request_id;sensor_name>>
-#
-# request_id allows a returned value to be matched to the correct query
-#
-# examples:
-#   SONAR
-#   IR_LEFT / IR_MIDDLE / IR_RIGHT
-#   LINE_LEFT / LINE_RIGHT
-#   LIGHT_FL / LIGHT_FR / LIGHT_BL / LIGHT_BR
-#
-#
-# returned values are converted depending on sensor type:
-#
-#   sonar
-#       -> float distance
-#
-#   IR + line sensors
-#       -> 0/1 converted to False/True
-#
-#   light sensors
-#       -> integer from 0-1023
-#
-#
-# irAll() requests the individual IR sensors and combines them using OR
-# Pi2Go checks left + middle + right
-# Initio only checks left + right
-#
-#
-# SENSOR_TIMEOUT sets how long simclient will wait for a calculated
-# sensor value before keeping the previous reading
-#
-# normal state packets are still received so the existing Robot-Workshop
-# communication remains backwards compatible
-
-
 """
 simclient.py provides the interface between the simulator and external python code.
 Commands are sent to the simulator over UDP and sensor readings are requested only
@@ -121,6 +67,13 @@ class SimulatorClient:
         self.back_led2_red_value = 0
         self.back_led2_green_value = 0
         self.back_led2_blue_value = 0
+
+        # Pi2Go2 LED values
+        self.pi2go2_leds = [[0, 0, 0] for _ in range(10)]
+
+        # latest Pi2Go2 encoder readings
+        self.left_encoder_count = 0
+        self.right_encoder_count = 0
 
         self.fr_light_sensor = 0
         self.fl_light_sensor = 0
@@ -235,8 +188,8 @@ class SimulatorClient:
     def irCentre(self):
         """Returns True if the centre IR sensor detects an obstacle."""
 
-        # Initio only has the left/right obstacle sensors
-        if self.robot_name.startswith("INITIO"):
+        # Initio and Pi2Go2 only have left/right obstacle sensors
+        if self.robot_name.startswith("INITIO") or self.robot_name.startswith("PI2GO2"):
             return False
 
         value = self.query_sensor("IR_MIDDLE")
@@ -250,7 +203,7 @@ class SimulatorClient:
     def irAll(self):
         """Returns True if any obstacle sensor is triggered."""
 
-        if self.robot_name.startswith("INITIO"):
+        if self.robot_name.startswith("INITIO") or self.robot_name.startswith("PI2GO2"):
             return self.irLeft() or self.irRight()
 
         return self.irLeft() or self.irRight() or self.irCentre()
@@ -276,6 +229,51 @@ class SimulatorClient:
             self.right_line_sensor_triggered = bool(int(value))
 
         return self.right_line_sensor_triggered
+
+
+     
+    # Pi2Go2 wheel encoders
+     
+
+    def getEncoderLeft(self):
+        """Returns the current left Pi2Go2 wheel encoder count."""
+
+        if not self.robot_name.startswith("PI2GO2"):
+            return 0
+
+        value = self.query_sensor("ENCODER_LEFT")
+
+        if value is not None:
+            self.left_encoder_count = int(value)
+
+        return self.left_encoder_count
+
+
+    def getEncoderRight(self):
+        """Returns the current right Pi2Go2 wheel encoder count."""
+
+        if not self.robot_name.startswith("PI2GO2"):
+            return 0
+
+        value = self.query_sensor("ENCODER_RIGHT")
+
+        if value is not None:
+            self.right_encoder_count = int(value)
+
+        return self.right_encoder_count
+
+
+    def resetEncoders(self):
+        """Resets both Pi2Go2 encoder counts to zero."""
+
+        if not self.robot_name.startswith("PI2GO2"):
+            return
+
+        value = self.query_sensor("ENCODER_RESET")
+
+        if value is not None:
+            self.left_encoder_count = 0
+            self.right_encoder_count = 0
 
 
     def forward(self, speed):
@@ -399,13 +397,20 @@ class SimulatorClient:
         self.vth = vth
 
 
-         
+     
     # Pi2Go LEDs
-         
+     
 
     def setLED(self, LED, red, green, blue):
         """Sets the selected LED to the required RGB value."""
 
+        # Pi2Go2 LEDs are individually addressable 0-9
+        if self.robot_name.startswith("PI2GO2"):
+            if 0 <= LED < 10:
+                self.pi2go2_leds[LED] = [red, green, blue]
+            return
+
+        # original Pi2Go sets each side/pair together
         if LED == 0:
             self.front_led1_red_value = red
             self.front_led1_green_value = green
@@ -442,12 +447,22 @@ class SimulatorClient:
     def setAllLEDs(self, red, green, blue):
         """Sets all LEDs to the required RGB value."""
 
+        if self.robot_name.startswith("PI2GO2"):
+            for i in range(10):
+                self.setLED(i, red, green, blue)
+            return
+
         for i in range(4):
             self.setLED(i, red, green, blue)
 
 
     def getLED(self, LED):
         """Gets the RGB value of the selected LED."""
+
+        if self.robot_name.startswith("PI2GO2"):
+            if 0 <= LED < 10:
+                return tuple(self.pi2go2_leds[LED])
+            return None
 
         if LED == 0:
             return (
@@ -504,15 +519,17 @@ class SimulatorClient:
 
         all_led_values = []
 
-        for i in range(8):
+        led_count = 10 if self.robot_name.startswith("PI2GO2") else 8
+
+        for i in range(led_count):
             all_led_values.append(self.getLED(i))
 
         return all_led_values
 
 
-         
+     
     # UDP communication
-         
+     
 
     def send_commands(self):
         """Continuously sends motor/LED commands to the simulator."""
@@ -534,6 +551,13 @@ class SimulatorClient:
                         message.encode("utf-8"),
                         (UDP_IP, UDP_COMMAND_PORT)
                     )
+
+                elif self.robot_name == "PI2GO2":
+                    message = "<<%f;%f" % (self.vx, self.vth)
+                    for led in self.pi2go2_leds:
+                        message += ";%d;%d;%d" % (int(led[0]), int(led[1]), int(led[2]))
+                    message += ">>"
+                    sock.sendto(message.encode("utf-8"), (UDP_IP, UDP_COMMAND_PORT))
 
                 elif self.robot_name == "PI2GO":
                     message = "<<%f;%f;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d>>" % (
@@ -639,7 +663,20 @@ class SimulatorClient:
                 self.bl_light_sensor = int(values_list[9])
                 self.robot_control_switch_on = int(values_list[10])
 
-            elif self.robot_name.startswith("PI2GO") and len(values_list) >= 36:
+            elif self.robot_name == "PI2GO2" and len(values_list) >= 42:
+                self.sonar_range = float(values_list[1])
+                self.left_line_sensor_triggered = int(values_list[2])
+                self.right_line_sensor_triggered = int(values_list[3])
+                self.ir_left_triggered = int(values_list[4])
+                self.ir_middle_triggered = False
+                self.ir_right_triggered = int(values_list[6])
+                self.fl_light_sensor = int(values_list[7])
+                self.fr_light_sensor = int(values_list[8])
+                self.br_light_sensor = int(values_list[9])
+                self.bl_light_sensor = int(values_list[10])
+                self.robot_control_switch_on = int(values_list[41])
+
+            elif self.robot_name == "PI2GO" and len(values_list) >= 36:
                 self.sonar_range = float(values_list[1])
                 self.left_line_sensor_triggered = int(values_list[2])
                 self.right_line_sensor_triggered = int(values_list[3])
