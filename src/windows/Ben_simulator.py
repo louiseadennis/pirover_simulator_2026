@@ -76,6 +76,8 @@ IR_DISTANCE_NOISE = 2.0
 LED_RADIUS = 2.8
 LED_OUTLINE_RADIUS = 3.8
 LED_OFF_COLOR = (35, 35, 35)
+PI2GO_LED_COUNT = 8
+PI2GO2_LED_COUNT = 10
 
 
 # Pi2Go2 encoder setup
@@ -783,7 +785,7 @@ class Simulator(pyglet.window.Window):
             bottom_y = -half_height + 6
 
             front_leds = []
-            for i in range(8):
+            for i in range(PI2GO2_LED_COUNT - 2):
                 y = top_y + (bottom_y - top_y) * i / 7
                 front_leds.append((front_x - 10, y))
 
@@ -848,6 +850,9 @@ class Simulator(pyglet.window.Window):
 
 
     def set_robot_led_values(self, values, led_count):
+
+        # Never write more LEDs than the selected robot actually created.
+        led_count = min(led_count, len(self.robot_led_values))
 
         # RGB values start after vx and vth
         for i in range(led_count):
@@ -3585,26 +3590,32 @@ class Simulator(pyglet.window.Window):
                     continue
 
 
-                # Pi2Go2 command packet
-                if len(values) == 32:
+                # Pi2Go2: 2 movement values + 10 RGB LEDs = 32 values
+                if (
+                    self.selected_robot == "Pi2Go2"
+                    and len(values) == 2 + PI2GO2_LED_COUNT * 3
+                ):
 
                     self.socket_vx = float(values[0])
                     self.socket_vth = float(values[1])
-                    self.set_robot_led_values(values, 10)
-
-
-                # Pi2Go command packet
-                elif len(values) == 26:
-
-                    self.socket_vx = float(
-                        values[0]
+                    self.set_robot_led_values(
+                        values,
+                        PI2GO2_LED_COUNT
                     )
 
-                    self.socket_vth = float(
-                        values[1]
-                    )
 
-                    self.set_robot_led_values(values, 8)
+                # Pi2Go: 2 movement values + 8 RGB LEDs = 26 values
+                elif (
+                    self.selected_robot == "Pi2Go"
+                    and len(values) == 2 + PI2GO_LED_COUNT * 3
+                ):
+
+                    self.socket_vx = float(values[0])
+                    self.socket_vth = float(values[1])
+                    self.set_robot_led_values(
+                        values,
+                        PI2GO_LED_COUNT
+                    )
 
 
                 # Initio command packet

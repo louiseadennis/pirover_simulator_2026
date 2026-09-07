@@ -18,6 +18,10 @@ PUBLISH_INTERVAL = 0.02
 # maximum time to wait for an on-demand sensor reply
 SENSOR_TIMEOUT = 0.2
 
+# individually addressable RGB LEDs
+PI2GO_LED_COUNT = 8
+PI2GO2_LED_COUNT = 10
+
 
 class SimulatorClient:
 
@@ -39,37 +43,14 @@ class SimulatorClient:
         self.vx = 0
         self.vth = 0
 
-        # Pi2Go LED values
-        self.front_led1_red_value = 0
-        self.front_led1_green_value = 0
-        self.front_led1_blue_value = 0
-        self.front_led2_red_value = 0
-        self.front_led2_green_value = 0
-        self.front_led2_blue_value = 0
-
-        self.left_led1_red_value = 0
-        self.left_led1_green_value = 0
-        self.left_led1_blue_value = 0
-        self.left_led2_red_value = 0
-        self.left_led2_green_value = 0
-        self.left_led2_blue_value = 0
-
-        self.right_led1_red_value = 0
-        self.right_led1_green_value = 0
-        self.right_led1_blue_value = 0
-        self.right_led2_red_value = 0
-        self.right_led2_green_value = 0
-        self.right_led2_blue_value = 0
-
-        self.back_led1_red_value = 0
-        self.back_led1_green_value = 0
-        self.back_led1_blue_value = 0
-        self.back_led2_red_value = 0
-        self.back_led2_green_value = 0
-        self.back_led2_blue_value = 0
-
-        # Pi2Go2 LED values
-        self.pi2go2_leds = [[0, 0, 0] for _ in range(10)]
+        # LED values are stored as one [R, G, B] entry per physical LED.
+        # Pi2Go has 8 individually addressable LEDs; Pi2Go2 has 10.
+        self.pi2go_leds = [
+            [0, 0, 0] for _ in range(PI2GO_LED_COUNT)
+        ]
+        self.pi2go2_leds = [
+            [0, 0, 0] for _ in range(PI2GO2_LED_COUNT)
+        ]
 
         # latest Pi2Go2 encoder readings
         self.left_encoder_count = 0
@@ -231,9 +212,9 @@ class SimulatorClient:
         return self.right_line_sensor_triggered
 
 
-     
+    # --------------------------------------------------
     # Pi2Go2 wheel encoders
-     
+    # --------------------------------------------------
 
     def getEncoderLeft(self):
         """Returns the current left Pi2Go2 wheel encoder count."""
@@ -397,139 +378,70 @@ class SimulatorClient:
         self.vth = vth
 
 
-     
-    # Pi2Go LEDs
-     
+    # --------------------------------------------------
+    # Pi2Go / Pi2Go2 LEDs
+    # --------------------------------------------------
+
+    def _active_leds(self):
+        """Return the LED list for the connected robot, or None for Initio."""
+
+        if self.robot_name.startswith("PI2GO2"):
+            return self.pi2go2_leds
+
+        if self.robot_name.startswith("PI2GO"):
+            return self.pi2go_leds
+
+        return None
+
 
     def setLED(self, LED, red, green, blue):
-        """Sets the selected LED to the required RGB value."""
+        """Set one RGB LED. Pi2Go: 0..7, Pi2Go2: 0..9."""
 
-        # Pi2Go2 LEDs are individually addressable 0-9
-        if self.robot_name.startswith("PI2GO2"):
-            if 0 <= LED < 10:
-                self.pi2go2_leds[LED] = [red, green, blue]
+        leds = self._active_leds()
+        if leds is None or not 0 <= LED < len(leds):
             return
 
-        # original Pi2Go sets each side/pair together
-        if LED == 0:
-            self.front_led1_red_value = red
-            self.front_led1_green_value = green
-            self.front_led1_blue_value = blue
-            self.front_led2_red_value = red
-            self.front_led2_green_value = green
-            self.front_led2_blue_value = blue
-
-        elif LED == 1:
-            self.right_led1_red_value = red
-            self.right_led1_green_value = green
-            self.right_led1_blue_value = blue
-            self.right_led2_red_value = red
-            self.right_led2_green_value = green
-            self.right_led2_blue_value = blue
-
-        elif LED == 2:
-            self.back_led1_red_value = red
-            self.back_led1_green_value = green
-            self.back_led1_blue_value = blue
-            self.back_led2_red_value = red
-            self.back_led2_green_value = green
-            self.back_led2_blue_value = blue
-
-        elif LED == 3:
-            self.left_led1_red_value = red
-            self.left_led1_green_value = green
-            self.left_led1_blue_value = blue
-            self.left_led2_red_value = red
-            self.left_led2_green_value = green
-            self.left_led2_blue_value = blue
+        leds[LED] = [
+            max(0, min(255, int(red))),
+            max(0, min(255, int(green))),
+            max(0, min(255, int(blue)))
+        ]
 
 
     def setAllLEDs(self, red, green, blue):
-        """Sets all LEDs to the required RGB value."""
+        """Set every LED on the connected robot to the same RGB value."""
 
-        if self.robot_name.startswith("PI2GO2"):
-            for i in range(10):
-                self.setLED(i, red, green, blue)
+        leds = self._active_leds()
+        if leds is None:
             return
 
-        for i in range(4):
+        for i in range(len(leds)):
             self.setLED(i, red, green, blue)
 
 
     def getLED(self, LED):
-        """Gets the RGB value of the selected LED."""
+        """Return one LED as an (R, G, B) tuple."""
 
-        if self.robot_name.startswith("PI2GO2"):
-            if 0 <= LED < 10:
-                return tuple(self.pi2go2_leds[LED])
+        leds = self._active_leds()
+        if leds is None or not 0 <= LED < len(leds):
             return None
 
-        if LED == 0:
-            return (
-                self.front_led1_red_value,
-                self.front_led1_green_value,
-                self.front_led1_blue_value
-            )
-        elif LED == 1:
-            return (
-                self.front_led2_red_value,
-                self.front_led2_green_value,
-                self.front_led2_blue_value
-            )
-        elif LED == 2:
-            return (
-                self.right_led1_red_value,
-                self.right_led1_green_value,
-                self.right_led1_blue_value
-            )
-        elif LED == 3:
-            return (
-                self.right_led2_red_value,
-                self.right_led2_green_value,
-                self.right_led2_blue_value
-            )
-        elif LED == 4:
-            return (
-                self.back_led1_red_value,
-                self.back_led1_green_value,
-                self.back_led1_blue_value
-            )
-        elif LED == 5:
-            return (
-                self.back_led2_red_value,
-                self.back_led2_green_value,
-                self.back_led2_blue_value
-            )
-        elif LED == 6:
-            return (
-                self.left_led1_red_value,
-                self.left_led1_green_value,
-                self.left_led1_blue_value
-            )
-        elif LED == 7:
-            return (
-                self.left_led2_red_value,
-                self.left_led2_green_value,
-                self.left_led2_blue_value
-            )
+        return tuple(leds[LED])
 
 
     def getAllLEDs(self):
-        """Gets RGB values of all LEDs."""
+        """Return all LED RGB values for the connected robot."""
 
-        all_led_values = []
+        leds = self._active_leds()
+        if leds is None:
+            return []
 
-        led_count = 10 if self.robot_name.startswith("PI2GO2") else 8
-
-        for i in range(led_count):
-            all_led_values.append(self.getLED(i))
-
-        return all_led_values
+        return [tuple(led) for led in leds]
 
 
-     
+    # --------------------------------------------------
     # UDP communication
-     
+    # --------------------------------------------------
 
     def send_commands(self):
         """Continuously sends motor/LED commands to the simulator."""
@@ -552,43 +464,22 @@ class SimulatorClient:
                         (UDP_IP, UDP_COMMAND_PORT)
                     )
 
-                elif self.robot_name == "PI2GO2":
-                    message = "<<%f;%f" % (self.vx, self.vth)
-                    for led in self.pi2go2_leds:
-                        message += ";%d;%d;%d" % (int(led[0]), int(led[1]), int(led[2]))
-                    message += ">>"
-                    sock.sendto(message.encode("utf-8"), (UDP_IP, UDP_COMMAND_PORT))
-
-                elif self.robot_name == "PI2GO":
-                    message = "<<%f;%f;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d>>" % (
-                        self.vx,
-                        self.vth,
-                        int(self.front_led1_red_value),
-                        int(self.front_led1_green_value),
-                        int(self.front_led1_blue_value),
-                        int(self.front_led2_red_value),
-                        int(self.front_led2_green_value),
-                        int(self.front_led2_blue_value),
-                        int(self.right_led1_red_value),
-                        int(self.right_led1_green_value),
-                        int(self.right_led1_blue_value),
-                        int(self.right_led2_red_value),
-                        int(self.right_led2_green_value),
-                        int(self.right_led2_blue_value),
-                        int(self.back_led1_red_value),
-                        int(self.back_led1_green_value),
-                        int(self.back_led1_blue_value),
-                        int(self.back_led2_red_value),
-                        int(self.back_led2_green_value),
-                        int(self.back_led2_blue_value),
-                        int(self.left_led1_red_value),
-                        int(self.left_led1_green_value),
-                        int(self.left_led1_blue_value),
-                        int(self.left_led2_red_value),
-                        int(self.left_led2_green_value),
-                        int(self.left_led2_blue_value)
+                elif self.robot_name in ("PI2GO", "PI2GO2"):
+                    leds = (
+                        self.pi2go2_leds
+                        if self.robot_name == "PI2GO2"
+                        else self.pi2go_leds
                     )
 
+                    values = [str(float(self.vx)), str(float(self.vth))]
+                    for red, green, blue in leds:
+                        values.extend((
+                            str(int(red)),
+                            str(int(green)),
+                            str(int(blue))
+                        ))
+
+                    message = "<<" + ";".join(values) + ">>"
                     sock.sendto(
                         message.encode("utf-8"),
                         (UDP_IP, UDP_COMMAND_PORT)
@@ -712,3 +603,4 @@ class SimulatorClient:
 
             self.sensor_events.clear()
             self.sensor_results.clear()
+

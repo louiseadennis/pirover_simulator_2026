@@ -153,9 +153,9 @@ def stop():
     sim.stop()
 
 
- 
+#======================================================================
 # Pi2Go / Pi2Go2 functions
- 
+#======================================================================
 
 def getSwitch():
     """Returns the value of the tact switch: True==pressed"""
@@ -194,7 +194,7 @@ def getLightBR():
 
 
 def setLED(LED, red, green, blue):
-    """Sets selected RGB LED. Pi2Go2 uses LED numbers 0..9."""
+    """Sets selected RGB LED. Pi2Go uses 0..7, Pi2Go2 uses 0..9."""
     global sim
     sim.setLED(LED, red, green, blue)
 
@@ -211,9 +211,15 @@ def getLED(LED):
     return sim.getLED(LED)
 
 
- 
+def getAllLEDs():
+    """Gets RGB values for all LEDs on the connected robot."""
+    global sim
+    return sim.getAllLEDs()
+
+
+#======================================================================
 # Pi2Go2 wheel encoders
- 
+#======================================================================
 
 def getEncoderLeft():
     """Returns left wheel encoder count on Pi2Go2"""
