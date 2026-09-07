@@ -1,3 +1,17 @@
+""""
+1. Create the separate world-editor toolbar window.
+2. Load buttons/icons for available world objects.
+3. User selects or drags an item:
+      - obstacle
+      - line map
+      - light source
+      - background
+      - delete tool
+4. Pass the selected tool and mouse position to Ben_simulator.
+5. Ben_simulator performs the actual world change.
+6. Close the toolbar when editing finishes.
+""""
+
 from pathlib import Path
 
 import math

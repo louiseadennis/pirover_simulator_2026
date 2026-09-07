@@ -1,6 +1,24 @@
 """
-simrobot.py replicates the interface style of the real initio and pi2go libraries. This makes switching between the
-simulator and real robot a matter of changing an import statement.
+1. User imports simrobot.
+2. init() creates a SimulatorClient.
+3. Functions such as:
+      - forward()
+      - stop()
+      - setLED()
+      - getDistance()
+      - irLeft()
+   simply call the corresponding SimulatorClient function.
+4. SimulatorClient handles UDP communication with Ben_simulator.
+5. Sensor results are returned back through simrobot to the user program.
+
+User Program
+     ↓
+simrobot
+     ↓
+simclient
+     ↓ UDP
+Ben_simulator
+
 """
 
 from .simclient import SimulatorClient

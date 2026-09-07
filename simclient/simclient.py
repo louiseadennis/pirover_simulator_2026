@@ -1,7 +1,19 @@
 """
-simclient.py provides the interface between the simulator and external python code.
-Commands are sent to the simulator over UDP and sensor readings are requested only
-when the matching API is called.
+1. Create the simulator client and UDP sockets.
+2. Store the latest robot commands:
+      - movement
+      - servo position
+      - LED values
+3. User API calls update these stored command values.
+4. A background thread continuously sends commands to Ben_simulator
+5. Sensor API calls send an individual SENSOR request.
+6. Ben_simulator calculates that sensor only when requested.
+7. A receive thread collects:
+      - sensor replies
+      - robot state/status
+8. Return requested sensor values to simrobot/user code.
+
+This file handles communication between the user API and simulator.
 """
 
 import time
