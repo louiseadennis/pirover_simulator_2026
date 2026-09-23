@@ -217,7 +217,7 @@ class Simulator(pyglet.window.Window):
         )
         
         self.current_scale = self.scale
-        self.set_size(self.world_width/self.current_scale, self.world_height/self.current_scale)
+        self.set_size(int(self.world_width/self.current_scale), int(self.world_height/self.current_scale))
 
         # activate simulator OpenGL context
         self.switch_to()
